@@ -3,7 +3,7 @@
 //! Working:
 //! * Forward MIDI data from one port to another
 //! * Transform MIDI data (e.g. change the channel)
-//! * Monitor the received data
+//! * Monitor the received data (very basic)
 //!
 //! TODO:
 //! * Improve the logging
