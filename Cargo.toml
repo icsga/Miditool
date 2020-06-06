@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 clap = "2"
 midir = "0.6"
+regex = "1"
