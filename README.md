@@ -7,6 +7,8 @@ up as a dedicated input/ output MIDI port in the system, it's sometimes
 overkill to have to fire up a DAW just to route an input device to the right
 target. This utility aims to help with that.
 
+![miditool-screenshot.png](doc/Miditool.png)
+
 It supports:
 
 - Listing the active MIDI ports of the system
