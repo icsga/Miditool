@@ -10,6 +10,15 @@
 //! * Replay a previously captured file
 //! * Send a MIDI file to a device
 
+mod avg;
+use avg::Avg;
+
+mod display;
+use display::{Display, Colors, COLORS_BW, COLORS_TC};
+
+mod midi;
+use midi::MidiMessage;
+
 extern crate clap;
 use clap::{Arg, App};
 
@@ -25,31 +34,12 @@ use std::io::stdin;
 use std::io::prelude::*;
 use std::io::BufReader;
 
-enum MidiMessage {
-    NoteOff    {channel: u8, key: u8, velocity: u8},
-    NoteOn     {channel: u8, key: u8, velocity: u8},
-    KeyAT      {channel: u8, key: u8, pressure: u8},
-    ControlChg {channel: u8, controller: u8, value: u8},
-    ProgramChg {channel: u8, program: u8},
-    ChannelAT  {channel: u8, pressure: u8},
-    Pitchbend  {channel: u8, pitch: i16},
-}
-
 struct Config {
     in_port: usize,
     in_channel: u8,
     out_port: usize,
     out_channel: u8,
 }
-
-struct Colors {
-    c_normal: &'static str,
-    c_param: &'static str,
-    c_value: &'static str,
-}
-
-const COLORS_BW: Colors = Colors{ c_normal: "", c_param: "", c_value: "" };
-const COLORS_TC: Colors = Colors{ c_normal: "\x1b[30m", c_param: "\x1b[32m", c_value:"\x1b[34m" };
 
 fn main() {
     let mut config = Config{
@@ -108,6 +98,10 @@ fn main() {
                             .short("b")
                             .long("no-color")
                             .help("Don't use color when printing events."))
+                        .arg(Arg::with_name("timing")
+                            .short("t")
+                            .long("show-timing")
+                            .help("Show system real-time messages."))
                         .get_matches();
     let in_port = matches.value_of("inport").unwrap_or("");
     config.in_port = in_port.parse().unwrap_or(std::usize::MAX);
@@ -121,6 +115,7 @@ fn main() {
     let list = matches.is_present("list");
     let record = matches.is_present("write");
     let outfile = matches.value_of("write").unwrap_or("");
+    let show_time = matches.is_present("timing");
 
     if list {
         match list_all_ports() {
@@ -161,7 +156,7 @@ fn main() {
         configs.push(config);
     }
 
-    match receive_data(&configs, monitor, record, outfile, colors) {
+    match receive_data(&configs, monitor, record, outfile, colors, show_time) {
         Ok(_) => (),
         Err(err) => println!("Error: {}", err)
     }
@@ -171,12 +166,18 @@ fn main() {
 ///
 /// If no output port has been defined, the data is only read, written to file
 /// if configured, and written to stdout if configured.
-fn receive_data(configs: &[Config], do_monitor: bool, do_record: bool, outfile: &str, colors: &'static Colors)
+fn receive_data(configs: &[Config],
+                do_monitor: bool,
+                do_record: bool,
+                outfile: &str,
+                colors: &'static Colors,
+                show_time: bool)
         -> Result<(), Box<dyn Error>> {
 
     let mut conn_list = vec!();
 
     for config in configs {
+        let mut display = Display::new(colors, show_time);
         let mut midi_in = MidiInput::new("MIDI input")?;
         midi_in.ignore(Ignore::None);
         let conf_in_port = config.in_port;
@@ -199,14 +200,22 @@ fn receive_data(configs: &[Config], do_monitor: bool, do_record: bool, outfile: 
 
         let conn_in = midi_in.connect(&in_port, "MIDI forward", move |timestamp, message, _| {
 
-            if message.len() < 2 {
-                return; // Unexpected size, ignore
-            }
             if in_channel > 0 && (message[0] & 0x0F) != in_channel - 1 {
                 return; // Not listening on this channel
             }
 
             if do_forward {
+                // Filter some messages (for Push2)
+                let m = MidiMessage::parse(message);
+                match m {
+                    MidiMessage::NoteOn{channel: _, key, velocity: _} => {
+                        if key <= 10 {
+                            return;
+                        }
+                    }
+                    _ => (),
+                }
+
                 // Forward data to configured output port
                 if out_channel < 16 && out_channel != in_channel {
                     // Adjust MIDI channel
@@ -225,7 +234,7 @@ fn receive_data(configs: &[Config], do_monitor: bool, do_record: bool, outfile: 
 
             if do_monitor {
                 // Print received data to screen
-                show_message(timestamp, conf_in_port, message, &colors);
+                display.show_message(timestamp, conf_in_port, message);
             }
 
             if do_record {
@@ -312,62 +321,3 @@ fn list_ports<T: MidiIO>(midi_io: &T, descr: &str)
     Ok(())
 }
 
-fn get_midi_message(message: &[u8]) -> MidiMessage {
-    let channel = message[0] & 0x0F;
-    let param = message[1];
-    let mut value = 0;
-    if message.len() > 2 {
-        value = message[2];
-    }
-    match message[0] & 0xF0 {
-        0x90 => MidiMessage::NoteOn{channel, key: param, velocity: value},
-        0x80 => MidiMessage::NoteOff{channel, key: param, velocity: value},
-        0xA0 => MidiMessage::KeyAT{channel, key: param, pressure: value},
-        0xB0 => MidiMessage::ControlChg{channel, controller: param, value},
-        0xC0 => MidiMessage::ProgramChg{channel, program: param},
-        0xD0 => MidiMessage::ChannelAT{channel, pressure: param},
-        0xE0 => {
-            let mut pitch: i16 = param as i16;
-            pitch |= (value as i16) << 7;
-            pitch -= 0x2000;
-            MidiMessage::Pitchbend{channel, pitch}
-        },
-        _ => panic!("Cannot convert message {:?}", message),
-    }
-}
-
-fn show_message(timestamp: u64, in_port: usize, message: &[u8], colors: &Colors) {
-    print!("{} Port {} ", timestamp, in_port);
-    let m = get_midi_message(message);
-    match m {
-        MidiMessage::NoteOn{channel, key, velocity} => {
-            print!("Ch {} {}NoteOn {}key={} velocity={}",
-                channel + 1, colors.c_param, colors.c_value, key, velocity);
-        }
-        MidiMessage::NoteOff{channel, key, velocity} => {
-            print!("Ch {} {}NoteOff {}key={} velocity={}",
-                channel + 1, colors.c_param, colors.c_value, key, velocity);
-        }
-        MidiMessage::KeyAT{channel, key, pressure} => {
-            print!("Ch {} {}Aftertouch {}key={} pressure={}",
-                channel + 1, colors.c_param, colors.c_value, key, pressure);
-        }
-        MidiMessage::ControlChg{channel, controller, value} => {
-            print!("Ch {} {}ControlChg {}controller={} value={}",
-                channel + 1, colors.c_param, colors.c_value, controller, value);
-        }
-        MidiMessage::ProgramChg{channel, program} => {
-            print!("Ch {} {}ProgramChg {}program={}",
-                channel + 1, colors.c_param, colors.c_value, program);
-        }
-        MidiMessage::ChannelAT{channel, pressure} => {
-            print!("Ch {} {}ChannelAftertouch {}pressure={}",
-                channel + 1, colors.c_param, colors.c_value, pressure);
-        }
-        MidiMessage::Pitchbend{channel, pitch} => {
-            print!("Ch {} {}Pitchbend {}pitch={}",
-                channel + 1, colors.c_param, colors.c_value, pitch);
-        }
-    }
-    println!("{}", colors.c_normal);
-}
