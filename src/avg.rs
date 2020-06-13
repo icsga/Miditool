@@ -3,6 +3,7 @@ pub struct Avg {
     size: usize,
     position: usize,
     num_values: usize,
+    sum: f64,
 }
 
 impl Avg {
@@ -10,12 +11,18 @@ impl Avg {
         Avg{values: vec!{0.0; size},
             size,
             position: 0,
-            num_values: 0
+            num_values: 0,
+            sum: 0.0
         }
     }
 
-    pub fn add_value(&mut self, value: f64) -> Option<f64> {
+    /// Add value to the ringbuffer, return average.
+    pub fn add_value(&mut self, value: f64) -> f64 {
+        if self.num_values == self.size {
+            self.sum -= self.values[self.position];
+        }
         self.values[self.position] = value;
+        self.sum += value;
         self.position += 1;
         if self.position >= self.size {
             self.position = 0;
@@ -23,11 +30,6 @@ impl Avg {
         if self.num_values < self.size {
             self.num_values += 1;
         }
-        if self.num_values == self.size {
-            let avg: f64 = self.values.iter().sum::<f64>() / (self.size as f64);
-            Some(avg)
-        } else {
-            None
-        }
+        self.sum / (self.num_values as f64)
     }
 }

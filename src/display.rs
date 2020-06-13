@@ -46,17 +46,12 @@ impl Display {
             // We have a previous TS, so we can calculate the current BPM
             let diff = (timestamp - self.last_clock) * 24; // Diff is in usec
             let bpm = 60000000.0 / diff as f64;
-            let result = self.avg.add_value(bpm);
-            match result {
-                Some(bpm) => {
-                    // Calculate up to 1 decimal of BPM
-                    let bpm = (bpm * 10.0).round() / 10.0;
-                    if bpm != self.bpm {
-                        println!("{} BPM {}", timestamp, bpm);
-                        self.bpm = bpm;
-                    }
-                }
-                None => ()
+            let bpm = self.avg.add_value(bpm);
+            // Calculate up to 1 decimal of BPM
+            let bpm = (bpm * 10.0).round() / 10.0;
+            if bpm != self.bpm {
+                println!("{} BPM {}", timestamp, bpm);
+                self.bpm = bpm;
             }
         }
         self.last_clock = timestamp;
