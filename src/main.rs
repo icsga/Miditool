@@ -223,9 +223,11 @@ fn receive_data(configs: &[Config],
                 } else {
                     message_out[0] = message[0];
                 }
-                message_out[1] = message[1];
-                if message.len() == 3 {
-                    message_out[2] = message[2];
+                if message.len() > 1 {
+                    message_out[1] = message[1];
+                    if message.len() == 3 {
+                        message_out[2] = message[2];
+                    }
                 }
                 if let Some(c) = conn_out.as_mut() {
                     c.send(&message_out).unwrap_or_else(|_| println!("Error when forwarding message ..."));
