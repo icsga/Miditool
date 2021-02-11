@@ -50,7 +50,7 @@ impl MidiMessage {
                         pitch -= 0x2000;
                         MidiMessage::Pitchbend{channel, pitch}
                     },
-                    _ => panic!(),
+                    _ => panic!("Got message {}", message[0]),
                 }
             }
         }
